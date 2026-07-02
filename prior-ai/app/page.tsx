@@ -1,314 +1,189 @@
+
 "use client";
 
 import { useState } from "react";
+
+import PatientCard from "@/components/PatientCard";
+import AgentTimeline from "@/components/AgentTimeline";
+import ClinicalCard from "@/components/ClinicalCard";
+import PolicyCard from "@/components/PolicyCard";
+import DecisionCard from "@/components/DecisionCard";
 
 export default function Home() {
   const [text, setText] = useState("");
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [timeline, setTimeline] = useState<
-  { label: string; status: "pending" | "active" | "done" }[]
->([]);
-  
+  const [logs, setLogs] = useState<string[]>([]);
+  const [loadingText, setLoadingText] = useState("Initializing agents...");
+  const [timelineState, setTimelineState] = useState<any[]>([]);
+  const [stage, setStage] = useState<"idle" | "clinical" | "policy" | "final">("idle");
 
-const analyze = async () => {
-  try {
-    setLoading(true);
-    setResult(null);
+const addLog = (message: string) => {
+  const timestamp = new Date().toLocaleTimeString();
+  setLogs((prev) => [...prev, `[${timestamp}] ${message}`]);
+};
 
-    const steps = [
-      "🧠 Clinical Agent analyzing symptoms...",
-      "📋 Policy Agent evaluating guidelines...",
-      "⚖️ Decision Engine calculating score...",
-      "🏁 Final decision generated",
-    ];
+  const analyze = async () => {
+    try {
+      setLoading(true);
+      setResult(null);
+      setLogs([]); // reset logs each run
 
-    // init timeline
-    setTimeline(
-      steps.map((s, i) => ({
-        label: s,
-        status: i === 0 ? "active" : "pending",
-      }))
-    );
+      addLog("Request received");
+      setStage("clinical");
+      setLoadingText("🧠 Clinical Agent analyzing patient data...");
+      addLog("Clinical Agent started");
+      
+      const res = await fetch("/api/coordinator", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
 
-    // animate steps
-for (let i = 0; i < steps.length; i++) {
-  await new Promise((r) => setTimeout(r, 700));
+      addLog("API call completed");
 
-  setTimeline((prev) =>
-    prev.map((item, idx) => {
-      if (idx < i) return { ...item, status: "done" };
-      if (idx === i) return { ...item, status: "active" };
-      return item;
-    })
-  );
-}
+      const data = await res.json();
 
-    const res = await fetch("/api/coordinator", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
+      addLog("Policy Agent evaluating rules");
 
-    const data = await res.json();
-    setResult(data.output);
+    setTimeout(() => {
+      setStage("policy");
+      addLog("Policy Agent completed");
+    }, 400);
 
-    // mark all done
-    setTimeline((prev) =>
-      prev.map((item) => ({ ...item, status: "done" }))
-    );
-  } catch (err) {
-    setResult({ error: "API call failed" });
-  } finally {
+setTimeout(() => {
+      setStage("final");
+      addLog("Decision Engine calculating score");
+    }, 900);
+
+    setTimeout(() => {
+      setResult(data.output);
+      addLog("Final decision generated");
+      setLoading(false);
+    }, 1300);
+
+  } catch (e) {
+    addLog("ERROR: API failed");
+    setResult({ error: "API failed" });
     setLoading(false);
   }
 };
 
-  const confidence = Number(result?.confidence ?? 0);
   return (
     <main
-      style={{
-        padding: 40,
-        fontFamily: "Arial",
-        background: "#f5f7fb",
-        minHeight: "100vh",
-      }}
-    >
-      {/* HEADER */}
+  style={{
+    padding: "32px 24px",
+    fontFamily: "Inter, system-ui, sans-serif",
+    background: "linear-gradient(to bottom, #f8fafc, #eef2ff)",
+    minHeight: "100vh",
+    color: "#0f172a",
+  }}
+  >
+    <div
+  style={{
+    maxWidth: 1100,
+    margin: "0 auto",
+  }}
+>
+  <div
+    style={{
+      background: "white",
+      padding: 20,
+      borderRadius: 16,
+      boxShadow: "0 8px 20px rgba(0,0,0,0.06)",
+      marginBottom: 20,
+      border: "1px solid #e2e8f0",
+    }}
+  >
+    <h1 style={{ margin: 0, fontSize: 22 }}>
+      🧠 PriorAI
+    </h1>
+    <p style={{ margin: "6px 0 0", color: "#64748b" }}>
+      AI Multi-Agent Prior Authorization System
+    </p>
+  </div>
+
       <h1>🧠 PriorAI - Agentic Healthcare Assistant</h1>
 
-      {/* INPUT */}
+      <p style={{ color: "#64748b" }}>
+  Simulating real-world insurance prior authorization workflow using AI agents
+</p>
+
       <textarea
-        rows={6}
-        style={{
-          width: "100%",
-          marginTop: 20,
-          padding: 12,
-          borderRadius: 8,
-          border: "1px solid #ccc",
-        }}
-        placeholder="Paste clinical notes here..."
         value={text}
         onChange={(e) => setText(e.target.value)}
+        placeholder="Paste clinical notes..."
+        style={input}
       />
 
-      {/* BUTTON */}
-      <button
-        onClick={analyze}
-        disabled={loading}
-        style={{
-          marginTop: 20,
-          width: "100%",
-          padding: "14px",
-          background: loading ? "#94a3b8" : "#2563eb",
-          color: "white",
-          border: "none",
-          borderRadius: 8,
-          fontSize: 16,
-          fontWeight: "bold",
-          cursor: loading ? "not-allowed" : "pointer",
-        }}
-      >
-        {loading ? "Analyzing..." : "Analyze Case"}
+      <button onClick={analyze} style={button} disabled={loading}>
+       {loading ? loadingText : "Analyze Case"}
       </button>
 
-      {/* AGENT TIMELINE */}
-      {timeline.length > 0 && (
-        <div
-          style={{
-          marginTop: 20,
-          padding: 15,
-          background: "#0f172a",
-          borderRadius: 10,
-          color: "white",
-          }}
-        >
-        <h3>🧠 Agent Timeline</h3>
-
-        {timeline.map((step, index) => (
-          <div
-            key={index}
-style={{
-  padding: "10px 0",
-  fontSize: 14,
-  display: "flex",
-  alignItems: "center",
-  gap: 10,
-
-  opacity: step.status === "pending" ? 0.3 : 1,
-
-  color:
-    step.status === "done"
-      ? "#22c55e"
-      : step.status === "active"
-      ? "#60a5fa"
-      : "#94a3b8",
-
-  fontWeight: step.status === "active" ? "bold" : "normal",
-
-  animation:
-      step.status === "active" ? "pulse 1s infinite" : "none",
-}}
-          >
-<span style={{ width: 20, display: "inline-block" }}>
-  {step.status === "done" && "✔"}
-  {step.status === "active" && "⚡"}
-  {step.status === "pending" && "○"}
-</span>
-          {step.label}
-            </div>
-            ))}
-          </div>
-        )}
-
-      {/* LOADING STATE */}
       {loading && (
-        <div style={{ marginTop: 20, color: "#555" }}>
-          🧠 Agents are processing clinical + policy evaluation...
-        </div>
-      )}
+  <div
+    style={{
+      marginTop: 20,
+      padding: 15,
+      background: "#0f172a",
+      color: "white",
+      borderRadius: 12,
+      animation: "pulse 1.5s infinite",
+    }}
+  >
+    {loadingText}
+  </div>
+)}
 
-      {/* ERROR STATE */}
-      {result?.error && (
-        <div
-          style={{
-            marginTop: 20,
-            padding: 12,
-            background: "#fee2e2",
-            color: "#991b1b",
-            borderRadius: 8,
-          }}
-        >
-          ❌ {result.error}
-        </div>
-      )}
+<div style={{ fontSize: 12, opacity: 0.6 }}>
+  🧠 AI Reasoning Engine v1.0 • Multi-Agent Mode Active
+</div>
 
-      {/* RESULT DASHBOARD */}
-      {result && !result.error && (
-        <div style={{ marginTop: 30, display: "grid", gap: 20 }}>
-          
-          {/* FINAL DECISION CARD */}
-          <div
-            style={{
-              padding: 24,
-              borderRadius: 12,
-              color: "white",
-              textAlign: "center",
-              fontSize: 22,
-              fontWeight: "bold",
-              background:
-                result.recommendation === "APPROVE"
-                  ? "#16a34a"
-                  : result.recommendation === "DENY"
-                  ? "#dc2626"
-                  : "#eab308",
-            }}
-          >
-            {result.recommendation}
-          </div>
-
-          {/* CONFIDENCE */}
-          <div style={cardStyle}>
-            <h3>📊 Confidence Score</h3>
-
-            <div style={{ fontSize: 18, fontWeight: "bold" }}>
-              {Math.round(Number(result?.confidence ?? 0))}%
-            </div>
-
-            <div style={barContainer}>
-              <div
-                style={{
-                  width: `${confidence * 100}%`,
-                  height: "100%",
-                  background:
-                    confidence > 0.7
-                      ? "#16a34a"
-                      : confidence > 0.4
-                      ? "#eab308"
-                      : "#dc2626",
-                }}
-              />
-            </div>
-          </div>
-
-          {/* SCORE BREAKDOWN */}
-          <div style={cardStyle}>
-            <h3>📊 Decision Breakdown</h3>
-
-            <p>Diagnosis Impact: {result?.breakdown?.diagnosis ?? 0}</p>
-
-            <p>Severity Impact: {result?.breakdown?.severity ?? 0}</p>
-
-            <p>Treatment Impact: {result?.breakdown?.treatments ?? 0}</p>
-
-            <p>Policy Impact: {result?.breakdown?.policy ?? 0}</p>
-
-            <div style={{ marginTop: 10 }}>
-              <strong>Total Score:</strong>{" "}
-              {Math.round(result?.confidence ?? 0)}
-            </div>
-            </div>
-          {/* CLINICAL */}
-          <div style={cardStyle}>
-            <h3>🧠 Clinical Agent</h3>
-
-            <p><b>Diagnosis:</b> {result.clinical?.diagnosis ?? "N/A"}</p>
-            <p>
-              <b>Symptoms:</b>{" "}
-              {result.clinical?.symptoms?.join(", ") || "N/A"}
-            </p>
-            <p><b>Duration:</b> {result.clinical?.duration ?? "N/A"}</p>
-            <p><b>Severity:</b> {result.clinical?.severity_hint ?? "low"}</p>
-          </div>
-
-          {/* POLICY */}
-          <div style={cardStyle}>
-            <h3>📋 Policy Agent</h3>
-
-            <p>
-              <b>Status:</b>{" "}
-              {result.policy?.approved ? "APPROVED" : "DENIED"}
-            </p>
-
-            <div>
-              <b>Reasons:</b>
-              <ul>
-                {result.policy?.reasons?.map((r: string, i: number) => (
-                  <li key={i}>{r}</li>
-                ))}
-              </ul>
-            </div>
-
-            <div>
-              <b>Missing Requirements:</b>
-              <ul>
-                {result.policy?.missing_requirements?.map(
-                  (r: string, i: number) => (
-                    <li key={i}>{r}</li>
-                  )
-                )}
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
+      <div style={grid}>
+        <PatientCard result={result} />
+        <AgentTimeline stage={stage} timelineState={timelineState} />
+        <ClinicalCard result={result} />
+        <PolicyCard result={result} />
+        <DecisionCard result={result} />
+        <p>
+  Bias Check: Clinical evidence + Policy constraints combined
+</p>
+      </div>
+      </div>
     </main>
   );
 }
 
-/* ---------------- STYLES ---------------- */
-
-const cardStyle: React.CSSProperties = {
-  padding: 20,
-  background: "white",
-  borderRadius: 12,
-  boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
+const page: React.CSSProperties = {
+  padding: 30,
+  fontFamily: "Arial",
+  background: "#f5f7fb",
+  minHeight: "100vh",
 };
 
-const barContainer: React.CSSProperties = {
-  height: 10,
-  background: "#e5e7eb",
-  borderRadius: 5,
-  marginTop: 8,
-  overflow: "hidden",
+const input: React.CSSProperties = {
+  width: "100%",
+  padding: 12,
+  marginTop: 20,
+  borderRadius: 8,
+  border: "1px solid #ccc",
 };
+
+const button: React.CSSProperties = {
+  marginTop: 15,
+  width: "100%",
+  padding: 14,
+  background: "#2563eb",
+  color: "white",
+  border: "none",
+  borderRadius: 8,
+  fontWeight: "bold",
+};
+
+const grid: React.CSSProperties = {
+  marginTop: 25,
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+  gap: 16,
+};
+

@@ -162,13 +162,12 @@ function decisionEngine(clinical: any, policy: any) {
   if (policy.approved) breakdown.policy = 25;
 
   const score =
-    breakdown.diagnosis +
+    (breakdown.diagnosis +
     breakdown.severity +
     breakdown.treatments +
-    breakdown.policy +
-    40; // baseline
+    breakdown.policy ) /80*100; // baseline
 
-  const confidence = Math.min(100, Math.max(0, score));
+  const confidence = Math.max(0, Math.min(100, score));
 
   let recommendation = "REVIEW REQUIRED";
   if (confidence >= 75) recommendation = "APPROVE";
@@ -201,13 +200,25 @@ export async function POST(req: Request) {
     /* STEP 3 */
     const decision = decisionEngine(clinical, policy);
 
-    const output = {
-      clinical,
-      policy,
-      recommendation: decision.recommendation,
-      confidence: decision.confidence,
-      breakdown: decision.breakdown,
-    };
+    const explanation = explainDecision(clinical, policy, decision);
+
+    const timeline = [
+  { agent: "Clinical Agent", status: "completed" },
+  { agent: "Policy Agent", status: "completed" },
+  { agent: "Decision Engine", status: "completed" },
+];
+
+const output = {
+  clinical,
+  policy,
+  recommendation: decision.recommendation,
+  confidence: decision.confidence / 100,
+  breakdown: decision.breakdown,
+  explanation,
+
+  // ⭐ NEW: agent timeline
+  timeline,
+};
 
     return Response.json({ output });
   } catch (err) {
@@ -217,4 +228,32 @@ export async function POST(req: Request) {
       output: fallbackResponse(),
     });
   }
+}
+
+function explainDecision(clinical: any, policy: any, decision: any) {
+  const reasons: string[] = [];
+
+  if (!clinical.diagnosis) {
+    reasons.push("No confirmed diagnosis found in clinical note");
+  }
+
+  if (!clinical.treatments || clinical.treatments.length === 0) {
+    reasons.push("No documented treatment history");
+  }
+
+  if (clinical.duration && clinical.duration.includes("week")) {
+    reasons.push("Symptoms duration requires further evaluation under policy criteria");
+  }
+
+  if (!policy.approved) {
+    reasons.push("Policy requirements not fully satisfied for approval");
+  }
+
+  return {
+    explanation: reasons,
+    summary:
+      decision.recommendation === "APPROVE"
+        ? "Case meets criteria for approval"
+        : "Case does not meet required policy guidelines",
+  };
 }
