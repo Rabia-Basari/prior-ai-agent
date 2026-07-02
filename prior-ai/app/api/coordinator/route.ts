@@ -1,84 +1,220 @@
-function safeParse(raw: string | null) {
-  try {
-    if (!raw) return {};
-
-    const cleaned = raw
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
-
-    return JSON.parse(cleaned);
-  } catch (e) {
-     console.log("JSON parse error:", raw);
-    return {};
-  }
-}
 import OpenAI from "openai";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+/* ---------------- SAFE PARSER ---------------- */
+
+function safeParse(raw: string | null) {
+  try {
+    if (!raw) return {};
+
+    const jsonStart = raw.indexOf("{");
+    const jsonEnd = raw.lastIndexOf("}");
+
+    if (jsonStart === -1 || jsonEnd === -1) return {};
+
+    const cleaned = raw.slice(jsonStart, jsonEnd + 1);
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.log("❌ JSON PARSE FAILED:", raw);
+    return {};
+  }
+}
+
+/* ---------------- NORMALIZERS ---------------- */
+
+function toArray(value: any): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  return [value];
+}
+
+function safeString(value: any) {
+  if (!value) return null;
+  return String(value);
+}
+
+/* ---------------- DEFAULT FALLBACK ---------------- */
+
+function fallbackResponse() {
+  return {
+    clinical: {
+      diagnosis: null,
+      symptoms: [],
+      duration: null,
+      treatments: [],
+      severity_hint: "low",
+    },
+    policy: {
+      approved: false,
+      reasons: [],
+      missing_requirements: [],
+      risk_level: "low",
+    },
+    recommendation: "REVIEW REQUIRED",
+    confidence: 0.5,
+  };
+}
+
+/* ---------------- CLINICAL AGENT ---------------- */
+
+async function clinicalAgent(text: string) {
+  const res = await client.chat.completions.create({
+    model: "gpt-4.1-mini",
+    messages: [
+      {
+        role: "system",
+        content: `
+You are a Clinical Extraction Agent.
+
+Return ONLY valid JSON:
+
+{
+  "diagnosis": string | null,
+  "symptoms": string[],
+  "duration": string | null,
+  "treatments": string[],
+  "severity_hint": "low" | "medium" | "high"
+}
+
+RULES:
+- NO text
+- NO markdown
+- ONLY JSON
+        `,
+      },
+      { role: "user", content: text },
+    ],
+  });
+
+  const parsed = safeParse(res.choices[0].message.content);
+
+  return {
+    diagnosis: safeString(parsed.diagnosis),
+    symptoms: toArray(parsed.symptoms),
+    duration: safeString(parsed.duration),
+    treatments: toArray(parsed.treatments),
+    severity_hint: parsed.severity_hint || "low",
+  };
+}
+
+/* ---------------- POLICY AGENT ---------------- */
+
+async function policyAgent(clinical: any) {
+  const res = await client.chat.completions.create({
+    model: "gpt-4.1-mini",
+    messages: [
+      {
+        role: "system",
+        content: `
+You are a Medical Policy Agent.
+
+Return ONLY valid JSON:
+
+{
+  "approved": boolean,
+  "reasons": string[],
+  "missing_requirements": string[],
+  "risk_level": "low" | "medium" | "high"
+}
+
+RULES:
+- ONLY JSON
+- NO explanations
+        `,
+      },
+      {
+        role: "user",
+        content: JSON.stringify(clinical),
+      },
+    ],
+  });
+
+  const parsed = safeParse(res.choices[0].message.content);
+
+  return {
+    approved: Boolean(parsed.approved),
+    reasons: toArray(parsed.reasons),
+    missing_requirements: toArray(parsed.missing_requirements),
+    risk_level: parsed.risk_level || "low",
+  };
+}
+
+/* ---------------- DECISION ENGINE ---------------- */
+
+function decisionEngine(clinical: any, policy: any) {
+  let breakdown = {
+    diagnosis: 0,
+    severity: 0,
+    treatments: 0,
+    policy: 0,
+  };
+
+  if (clinical.diagnosis) breakdown.diagnosis = 20;
+
+  if (clinical.severity_hint === "high") breakdown.severity = 20;
+  else if (clinical.severity_hint === "medium") breakdown.severity = 15;
+
+  if (clinical.treatments.length > 0) breakdown.treatments = 10;
+
+  if (policy.approved) breakdown.policy = 25;
+
+  const score =
+    breakdown.diagnosis +
+    breakdown.severity +
+    breakdown.treatments +
+    breakdown.policy +
+    40; // baseline
+
+  const confidence = Math.min(100, Math.max(0, score));
+
+  let recommendation = "REVIEW REQUIRED";
+  if (confidence >= 75) recommendation = "APPROVE";
+  else if (confidence <= 40) recommendation = "DENY";
+
+  return {
+    recommendation,
+    confidence,
+    breakdown,
+  };
+}
+/* ---------------- API ROUTE ---------------- */
+
 export async function POST(req: Request) {
   try {
     const { text } = await req.json();
 
-    // Step 1: Clinical extraction
-    const clinicalRes = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "Extract diagnosis, symptoms, duration, treatments, confidence. Return ONLY JSON.",
-        },
-        { role: "user", content: text },
-      ],
-    });
+    if (!text) {
+      return Response.json({
+        output: fallbackResponse(),
+      });
+    }
 
-    const clinicalRaw = clinicalRes.choices[0].message.content;
-    const clinical = safeParse(clinicalRaw);
+    /* STEP 1 */
+    const clinical = await clinicalAgent(text);
 
-    // Step 2: Policy check
-    const policyRes = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a medical insurance policy agent. Decide approval based on clinical data. Return JSON with approved (true/false), reasons, missing requirements.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify(clinical),
-        },
-      ],
-    });
+    /* STEP 2 */
+    const policy = await policyAgent(clinical);
 
-    const policyRaw = policyRes.choices[0].message.content;
-    const policy = safeParse(policyRaw);
-    // Step 3: Final decision logic
-    const approved = policy.approved ?? false;
+    /* STEP 3 */
+    const decision = decisionEngine(clinical, policy);
 
-    const finalResult = {
+    const output = {
       clinical,
       policy,
-      recommendation: approved ? "APPROVE" : "REVIEW REQUIRED",
-        confidence:
-            approved
-                ? clinical.confidence === "high"
-                    ? 0.9
-                    : clinical.confidence === "moderate"
-                    ? 0.75
-                    : 0.6
-                : 0.5,
-            };
+      recommendation: decision.recommendation,
+      confidence: decision.confidence,
+      breakdown: decision.breakdown,
+    };
 
-    return Response.json({ output: finalResult });
-  } catch (err: any) {
-    return Response.json(
-      { error: err.message },
-      { status: 500 }
-    );
+    return Response.json({ output });
+  } catch (err) {
+    console.error("🔥 COORDINATOR ERROR:", err);
+
+    return Response.json({
+      output: fallbackResponse(),
+    });
   }
 }
